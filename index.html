@@ -2,7 +2,14 @@
 <head>
 <meta charset="utf-8">
 <style>
+
+body {
+  margin: 0px;
+  padding: 0px;
+}
+
 #content {
+  margin: 8px;
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   width: 960px;
   height: 500px;
@@ -97,6 +104,33 @@ td {
     text-decoration: none;
 }
 
+nav {
+  background-color: #F5F5F5;
+  overflow: hidden;
+  margin: 0 auto;
+  padding: 1em;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  text-align: left;
+}
+
+nav #title {
+  color: grey;
+  font-weight: bold;
+  margin-right: 0.3em;
+}
+
+nav a {
+  color: #404040;
+  display: inline-block;
+  /* Adjust padding to increase/decrease the space between links. */
+  padding: 0 0.2em;
+  font-size: 90%;
+}
+
+nav a:visited {
+  color: #404040;
+}
+
 </style>
 
 </head>
@@ -106,6 +140,13 @@ td {
 <div id="loading-overlay">
   <img id="loading-anim" src="loading.gif">
 </div>
+
+<nav id="navbar">
+  <span id="title">Usecounters</span>
+  <a href="https://github.com/georgf/usecounters/issues/new">Report an issue</a>
+  <a href="https://github.com/georgf/usecounters">Contribute</a>
+  <a href="http://telemetry.mozilla.org/">Telemetry portal</a>
+</nav>
 
 <div id="content">
   <p id="selection">
