@@ -1,0 +1,467 @@
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+#content {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  width: 960px;
+  height: 500px;
+  position: relative;
+}
+
+#details {
+  font-size: 85%;
+}
+
+.data {
+  margin: 10px;
+}
+
+table {
+  border-spacing: 3px;
+}
+
+tr:hover > td {
+  background-color: #F0F0F0;
+}
+
+td {
+  background-color: #F5F5F5;
+  padding: 5px;
+}
+
+.percentCell {
+  text-align: right;
+}
+
+.barCell {
+  vertical-align: center;
+  padding: 0px;
+  background-color: #FFFFFF;
+}
+
+.barCell > svg {
+  width: 400px;
+  height: 18px;
+  margin: 0px;
+}
+
+#loading-overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    background: #000;
+    opacity: 0.7;
+    filter: alpha(opacity=70);
+    z-index: 14;
+}
+
+#loading-anim {
+    width: 220px;
+    height: 19px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    margin: -9px 0 0 -110px;
+}
+
+.hidden {
+    display: none;
+}
+
+.infolink
+{
+    display: inline-block;
+    font-family: sans-serif;
+    font-weight: bold;
+    text-align: center;
+    width: 1.5ex;
+    height: 1.5ex;
+    font-size: 1.0ex;
+    border-radius: 1.4ex;
+    margin-right: 0px;
+    padding: 2px;
+    color: black;
+    background: white;
+    border: 1px solid black;
+    text-decoration: none;
+}
+
+.infolink:hover
+{
+    color: white;
+    background: black;
+    border-color: white;
+    text-decoration: none;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div id="loading-overlay">
+  <img id="loading-anim" src="loading.gif">
+</div>
+
+<div id="content">
+  <p id="selection">
+      Show <a href="https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/telemetry/collection/use-counters.html">use counters</a>
+      for group
+      <select class="groups"></select>
+      relative to
+      <select class="kind">
+        <option value="page">page (toplevel)</option>
+        <option value="document">document</option>
+      </select>
+      counts.
+  </p>
+
+  <p id="details">
+    <form>
+      The data comes from Firefox
+      <select id="select_version">...</select>
+      <select id="select_channel">
+        <option value="beta">beta</option>
+        <option value="nightly">nightly</option>
+      </select>.
+      It was collected from <span id="page_count">...</span> top level page loads and <span id="document_count">...</span> individual document loads.
+    </form>
+  </p>
+
+  <div class="data"></div>
+</div>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+<script src="https://telemetry.mozilla.org/v2/telemetry.js"></script>
+
+<script>
+
+// Use counters are only collected from prerelease channels.
+const gValidChannels = ["beta", "nightly"];
+
+// Map() of (channel -> version).
+var gAvailableVersions = null;
+
+// Caching already loaded data in-memory to subsequently avoid outgoing requests.
+var metricsCache = new Map();
+var histogramSumCache = new Map();
+
+function getChannel() {
+  return $("#select_channel").val();
+}
+
+function getVersion() {
+  if ($("#select_version option").length == 0) {
+    return null;
+  }
+  return $("#select_version").val();
+}
+
+async function getMetrics() {
+  let cacheId = `${getChannel()}/${getVersion()}`;
+  if (!metricsCache.get(cacheId)) {
+    let filterOptions = await new Promise(r => {
+      return Telemetry.getFilterOptions(getChannel(), getVersion(), r);
+    });
+    metricsCache.set(cacheId, filterOptions.metric);
+  }
+
+  return metricsCache.get(cacheId).filter(m => m.startsWith("USE_COUNTER2_"));
+}
+
+async function getHistogramSum(metric) {
+  let cacheId = `${getChannel()}/${getVersion()}/${metric}`;
+
+  if (histogramSumCache.has(cacheId)) {
+    return histogramSumCache.get(cacheId);
+  }
+
+  let filters = {};
+  let evo = await new Promise(r => Telemetry.getEvolution(getChannel(), getVersion(), metric, filters, false, r));
+  let sum = 0;
+  if ("" in evo) {
+    sum = evo[""].histogram().sum;
+  }
+
+  histogramSumCache.set(cacheId, sum);
+  return sum;
+}
+
+function strippedUseCounterName(uc) {
+  let kind = $('.kind').val();
+  let group = $('.groups').val();
+  let regexPrefix = new RegExp('^USE_COUNTER2_' + group + '_');
+  let regexSuffix = new RegExp('_' + kind.toUpperCase());
+  return uc.replace(regexPrefix, '')
+           .replace(regexSuffix, '');
+}
+
+function linkForProbeDetails(id) {
+  const base = `https://georgf.github.io/fx-data-explorer/`;
+  const params = {
+    searchtype: "in_any",
+    optout: "false",
+    constraint: "is_in",
+    version: "any",
+    detailView: `histogram/${id}`,
+    channel: getChannel(),
+    search: id,
+  };
+
+  return "https://georgf.github.io/fx-data-explorer/?" +
+         Object.entries(params)
+               .map(p => p[0] + "=" + encodeURIComponent(p[1]))
+               .join("&");
+}
+
+function createTable(data) {
+  let table = document.createElement('table');
+
+  for (let d of data) {
+    let tr = document.createElement('tr');
+
+    // Add name.
+    let td = document.createElement('td');
+    td.appendChild(document.createTextNode(d.shortName + " "));
+    let link = $('<a>', {
+      text: "?",
+      title: "More about this probe",
+      href: linkForProbeDetails(d.metric),
+      "class": "infolink",
+    });
+    link.appendTo(td);
+    td.setAttribute('title', d.metric);
+    tr.appendChild(td);
+
+    // Add percentage.
+    td = document.createElement('td');
+    td.appendChild(document.createTextNode(`${d.percentage.toFixed(3)}%`));
+    td.className += 'percentCell';
+    td.setAttribute('title', `${d.count.toLocaleString()} of total loads`);
+    tr.appendChild(td);
+
+    // Create bar cell.
+
+    td = document.createElement('td');
+    td.className += 'barCell';
+    td.setAttribute('title', `${d.percentage.toFixed(3)}%`);
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    let svg = document.createElementNS(svgNs, "svg");
+
+    let usedRectWidth = Math.min(400, Math.round(4 * d.percentage));
+
+    let rect = document.createElementNS(svgNs, 'rect');
+    rect.setAttribute('x', 0);
+    rect.setAttribute('y', 0);
+    rect.setAttribute('width', usedRectWidth);
+    rect.setAttribute('height', 100);
+    rect.setAttribute('fill', 'steelblue');
+    svg.appendChild(rect);
+
+    if (usedRectWidth < 400) {
+      let rect = document.createElementNS(svgNs, 'rect');
+      rect.setAttribute('x', usedRectWidth);
+      rect.setAttribute('y', 0);
+      rect.setAttribute('width', 400 - usedRectWidth);
+      rect.setAttribute('height', 100);
+      rect.setAttribute('fill', '#F0F0F0');
+      svg.appendChild(rect);
+    }
+
+    td.appendChild(svg);
+    tr.appendChild(td);
+
+    table.appendChild(tr);
+  }
+
+  return table;
+}
+
+function pct(fraction, total) {
+  return 100 * (fraction / total);
+}
+
+async function getTotalCount() {
+  let totalMetric = ($('.kind').val() == "page") ?
+                      "TOP_LEVEL_CONTENT_DOCUMENTS_DESTROYED" :
+                      "CONTENT_DOCUMENTS_DESTROYED";
+  return await getHistogramSum(totalMetric);
+}
+
+async function addTable(metrics) {
+  let totalCount = await getTotalCount();
+
+  let promises = [];
+  let sums = [];
+  for (let m of metrics) {
+    let p = getHistogramSum(m).then(sum => sums.push({
+      shortName: strippedUseCounterName(m),
+      metric: m,
+      percentage: pct(sum, totalCount),
+      count: sum,
+    }));
+    promises.push(p);
+  }
+
+  await Promise.all(promises);
+  sums.sort((a, b) => a.shortName.localeCompare(b.shortName));
+
+  let table = createTable(sums);
+  $('.data').append(table);
+}
+
+function makeHash() {
+  window.location.hash = `#kind=${encodeURIComponent($('.kind').val())}` +
+                         `&group=${encodeURIComponent($('.groups').val())}` +
+                         `&channel=${getChannel()}` +
+                         `&version=${getVersion()}`;
+}
+
+async function updateMetrics() {
+  $('.data').empty();
+  let kind = $('.kind').val();
+  let group = $('.groups').val();
+
+  let metrics = (await getMetrics())
+                  .filter(m => m.endsWith("_" + kind.toUpperCase()))
+                  .filter(m => m.startsWith("USE_COUNTER2_" + group + "_"));
+  console.log("metrics:", metrics.join(', '));
+
+  await addTable(metrics);
+}
+
+function parseQueryString() {
+  let params = new Map;
+  for (let pair of window.location.hash.substring(1).split('&')) {
+    let [key, value] = pair.split('=');
+    params.set(key, decodeURIComponent(value));
+  }
+
+  return params;
+}
+
+async function updateUI(params = null) {
+  var last = array => array[array.length - 1];
+
+  if (params && params.has('channel')) {
+    let channel = params.get('channel');
+    if (gValidChannels.includes(channel)) {
+      $('#select_channel').val(channel);
+    }
+  }
+
+  // Show only versions available for this channel.
+  const validVersions = gAvailableVersions.get(getChannel());
+  console.log("validVersions", validVersions);
+  $("#select_version > option").each(function() {
+    $(this).toggle(validVersions.includes(parseInt(this.value)));
+  });
+
+  // Use the closest valid version if an unavailable one was selected.
+  let version = (getVersion() != null) ? parseInt(getVersion()) : validVersions[0];
+  if (params && params.has('version')) {
+    version = parseInt(params.get('version'));
+  }
+  if (!validVersions.includes(version)) {
+    version = Math.max(last(validVersions), Math.min(validVersions[0], version));
+  }
+
+  $("#select_version").val(version);
+
+  // Update top level metrics.
+  let topLevelCount = await getHistogramSum("TOP_LEVEL_CONTENT_DOCUMENTS_DESTROYED");
+  let docCount = await getHistogramSum("CONTENT_DOCUMENTS_DESTROYED");
+  $('#page_count').text(topLevelCount.toLocaleString());
+  $('#document_count').text(docCount.toLocaleString());
+
+  // Add individual metrics.
+  let metrics = await getMetrics();
+  let groups = [...new Set(metrics.map(m => m.split('_')[2]))];
+  groups = groups.sort((a, b) => a.localeCompare(b));
+
+  for (let g of groups) {
+    $('.groups').append($('<option>', {
+      value: g,
+      text: g,
+    }));
+  }
+
+  if (params && params.has('kind')) {
+    $('.kind').val(params.get('kind'));
+  }
+
+  if (params && params.has('group')) {
+    $('.groups').val(params.get('group'));
+  }
+}
+
+async function update(params = null) {
+  document.getElementById("loading-overlay").classList.remove("hidden");
+
+  await updateUI(params);
+  makeHash();
+  await updateMetrics();
+
+  document.getElementById("loading-overlay").classList.add("hidden");
+}
+
+function initUI() {
+  // Build map of sorted valid versions per channel.
+  let versions = Telemetry.getVersions()
+                          .map(v => v.split("/"))
+                          .filter(v => gValidChannels.includes(v[0]));
+  gAvailableVersions = new Map();
+  for (let channel of gValidChannels) {
+    let vs = versions.filter(v => v[0] == channel)
+                     .map(v => parseInt(v[1]))
+                     .sort()
+                     .reverse();
+    gAvailableVersions.set(channel, vs);
+  }
+
+  // Sanitize beta version range.
+  if (gAvailableVersions.get("beta")[0] == gAvailableVersions.get("nightly")[0]) {
+    gAvailableVersions.get("beta").shift();
+  }
+
+  // Fill version selector.
+  let select = $("#select_version");
+  let allVersions = [... (new Set(versions.map(v => parseInt(v[1])))).values()]
+                      .sort()
+                      .reverse();
+  for (var version of allVersions) {
+    select.append("<option value=\""+version+"\" >"+version+"</option>");
+  }
+
+  // Set up event handlers.
+  let handler = () => update();
+  let selectors = [
+    "#select_version",
+    "#select_channel",
+    ".groups",
+    ".kind",
+  ];
+
+  for (let selector of selectors) {
+    $(selector).change(handler);
+    $(selector).keyup(handler);
+  }
+}
+
+async function start() {
+  await new Promise(r => Telemetry.init(r));
+  initUI();
+  await update(parseQueryString())
+}
+
+start();
+
+</script>
+
+</body>
+</html>
