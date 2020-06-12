@@ -425,6 +425,8 @@ async function updateUI(params = null) {
   let groups = [...new Set(metrics.map(m => m.split('_')[2]))];
   groups = groups.sort((a, b) => a.localeCompare(b));
 
+  $('.groups').empty();
+
   for (let g of groups) {
     $('.groups').append($('<option>', {
       value: g,
